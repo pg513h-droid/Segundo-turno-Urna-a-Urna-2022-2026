@@ -16,6 +16,14 @@ DATASET = {
 UF_NAMES = {"AC":"Acre","AL":"Alagoas","AP":"Amapá","AM":"Amazonas","BA":"Bahia","CE":"Ceará","DF":"Distrito Federal","ES":"Espírito Santo","GO":"Goiás","MA":"Maranhão","MG":"Minas Gerais","MS":"Mato Grosso do Sul","MT":"Mato Grosso","PA":"Pará","PB":"Paraíba","PE":"Pernambuco","PI":"Piauí","PR":"Paraná","RJ":"Rio de Janeiro","RN":"Rio Grande do Norte","RO":"Rondônia","RR":"Roraima","RS":"Rio Grande do Sul","SC":"Santa Catarina","SE":"Sergipe","SP":"São Paulo","TO":"Tocantins"}
 UF_ALL=list(UF_NAMES)
 COLORS=["#2563eb","#e5a11a","#16a34a","#9333ea","#dc2626","#0891b2"]
+BLUE_CANDIDATES=("JAIR BOLSONARO", "FLAVIO BOLSONARO", "FLÁVIO BOLSONARO")
+RED_CANDIDATES=("LUIZ INACIO LULA DA SILVA", "LUIZ INÁCIO LULA DA SILVA", "LULA")
+
+def candidate_color(name):
+    normalized=" ".join(str(name).upper().split())
+    if any(term in normalized for term in BLUE_CANDIDATES): return "#2563eb"
+    if any(term in normalized for term in RED_CANDIDATES): return "#dc2626"
+    return "#64748b"
 
 st.markdown("""
 <style>
@@ -181,8 +189,20 @@ for col,year,data,err in [(left,2022,data22,err22),(right,2026,data26,err26)]:
             if totals.empty: st.warning("Nenhum voto nominal de presidente foi identificado.")
             else:
                 total=int(totals["votos"].sum())
+                totals=totals.copy()
+                totals["% dos votos nominais"]=(totals["votos"] / total * 100).round(2)
+                totals["cor"] = totals["candidato"].map(candidate_color)
                 st.metric("Votos nominais processados",f"{total:,}".replace(",","."),help="Soma dos votos nominais identificados nos boletins carregados para o recorte.")
-                st.dataframe(totals,use_container_width=True,hide_index=True)
+                st.dataframe(totals[["numero","candidato","sigla_partido","votos","% dos votos nominais"]],use_container_width=True,hide_index=True)
+                bar=px.bar(totals.sort_values("votos"),x="votos",y="candidato",orientation="h",text="% dos votos nominais",color="candidato",color_discrete_map={r["candidato"]:r["cor"] for _,r in totals.iterrows()})
+                bar.update_traces(texttemplate="%{text:.2f}%",textposition="outside",cliponaxis=False)
+                bar.update_layout(showlegend=False,xaxis_title="Votos nominais",yaxis_title="",margin={"l":0,"r":35,"t":10,"b":10},height=max(220,50*len(totals)))
+                st.plotly_chart(bar,use_container_width=True)
+                # Count distinct polling sections represented in this dataset, without claiming it is the official turnout/apuração percentage.
+                vote_rows=data["votes"]
+                section_cols=[c for c in ["uf","municipio","zona","secao"] if c in vote_rows.columns]
+                section_count=int(vote_rows[section_cols].drop_duplicates().shape[0]) if section_cols else 0
+                st.metric("Seções representadas no arquivo",f"{section_count:,}".replace(",","."),help="Contagem de seções distintas presentes no arquivo oficial baixado; não equivale ao percentual nacional de urnas apuradas.")
                 st.caption(f"Linhas eleitorais processadas: {data['rows']:,} · [Arquivo oficial]({data['resource']['url']})")
 
 st.divider()
@@ -210,14 +230,19 @@ try:
     leaders=sorted(m.loc[m["lider"].ne("Dados pendentes") & m["lider"].ne("Sem dados"),"lider"].unique())
     color_map={name:COLORS[i%len(COLORS)] for i,name in enumerate(leaders)}
     color_map.update({"Dados pendentes":"#d1d5db","Sem dados":"#9ca3af"})
-    fig=px.choropleth_mapbox(m,geojson=gj,locations="sigla",featureidkey="properties.sigla",color="lider",
+    fig=px.choropleth_map(m,geojson=gj,locations="sigla",featureidkey="properties.sigla",color="lider",
        color_discrete_map=color_map,hover_name="nome",hover_data={"lider":True,"partido":True,"votos":":,", "sigla":False},
-       mapbox_style="carto-positron",center={"lat":-14.5,"lon":-52},zoom=2.4,opacity=.78)
+       map_style="carto-positron",center={"lat":-14.5,"lon":-52},zoom=2.4,opacity=.78)
     fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0},height=560,legend_title_text="Maior votação no recorte")
     st.plotly_chart(fig,use_container_width=True)
     st.dataframe(m[["sigla","nome","lider","partido","votos"]],use_container_width=True,hide_index=True)
 except Exception as e:
     st.error(f"Mapa indisponível neste momento: {e}")
+
+st.divider()
+st.subheader("Comparativo hora a hora e percentual de urnas")
+st.info("O arquivo final de Boletins de Urna traz os totais de cada seção, não um histórico horário dos resultados durante a apuração. Para exibir uma curva hora a hora real e o percentual oficial de urnas recebidas, é necessário integrar os arquivos históricos/variáveis de totalização do TSE e o total oficial de seções esperadas. Esta versão não estima esses números a partir do horário de geração do boletim.")
+st.markdown("Fonte oficial: [Dados Abertos do TSE — Resultados 2022](https://dadosabertos.tse.jus.br/dataset/resultados-2022) · [Conjuntos de Boletins de Urna](https://dadosabertos.tse.jus.br/dataset/resultados-2022-boletim-de-urna)")
 
 st.subheader("Fotos e cadastro oficial dos candidatos")
 st.write("O nome e o partido são lidos dos boletins. As fotos oficiais precisam ser vinculadas ao cadastro de candidaturas do TSE (DivulgaCandContas) por número/ID de candidatura; esta versão não associa fotos por busca textual para evitar identificação errada.")
